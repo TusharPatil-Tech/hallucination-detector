@@ -85,7 +85,7 @@ def get_evidence_from(claim, sents, emb, top_k=5):
     top = scores.topk(min(top_k, len(sents)))
     return [(sents[i], float(s)) for s, i in zip(top.values, top.indices)]
 
-def verify_claim(claim, evidence, thr=0.8, con_top=CON_TOP, min_sim=0.5):
+def verify_claim(claim, evidence, thr=0.8, con_top=CON_TOP, min_sim=0.5, con_thr=0.9):
     best_ent = {"score": 0.0, "evidence": ""}
     best_con = {"score": 0.0, "evidence": ""}
     for rank, (sent, sim) in enumerate(evidence):
@@ -98,7 +98,7 @@ def verify_claim(claim, evidence, thr=0.8, con_top=CON_TOP, min_sim=0.5):
             best_con = {"score": sc["contradiction"], "evidence": sent}
     if best_ent["score"] >= thr:
         return {"label": "entailment", "score": best_ent["score"], "evidence": best_ent["evidence"]}
-    if best_con["score"] >= thr:
+    if best_con["score"] >= con_thr:
         return {"label": "contradiction", "score": best_con["score"], "evidence": best_con["evidence"]}
     return {"label": "neutral", "score": max(best_ent["score"], best_con["score"]), "evidence": best_ent["evidence"]}
 
