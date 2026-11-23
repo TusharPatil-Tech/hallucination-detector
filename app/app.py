@@ -1,4 +1,6 @@
-import os, sys
+import os
+import sys
+
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 from flask import Flask, request, jsonify, render_template
@@ -7,10 +9,11 @@ import pipeline
 from cached_pipeline import run_cached
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"))
-pipeline.load_models()   # load once at startup, not on every request
+app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "..", "templates"))
+pipeline.load_models()  # load once at startup, not on every request
 
 MAX_CHARS = 3000
+
 
 @app.route("/")
 def index():
@@ -18,6 +21,7 @@ def index():
         return render_template("index.html")
     except TemplateNotFound:
         return "Backend is running. The web page comes in Step 4."
+
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -37,25 +41,22 @@ def analyze():
             title, answer, df, from_cache = run_cached(question=text)
         else:
             title, answer, df, from_cache = run_cached(answer=text)
-    except ValueError as e:          # e.g. no Wikipedia page found
+    except ValueError as e:  # e.g. no Wikipedia page found or unusable page
         return jsonify({"error": str(e)}), 404
-    except Exception as e:           # Groq down, bad key, etc.
+    except Exception as e:  # Groq down, bad key, network error, etc.
         return jsonify({"error": f"Something went wrong: {e}"}), 500
 
-    counts = df["verdict"].value_counts().to_dict()
-    summary = {
-        "total": int(len(df)),
-        "supported": int(counts.get("Supported", 0)),
-        "contradicted": int(counts.get("Contradicted", 0)),
-        "unverifiable": int(counts.get("Not enough info", 0)),
-    }
-    return jsonify({
-        "page": title,
-        "answer": answer,
-        "claims": df.to_dict("records"),
-        "summary": summary,
-        "from_cache": from_cache,
-    })
+    summary = pipeline.quantify_hallucination(df)
+    return jsonify(
+        {
+            "page": title,
+            "answer": answer,
+            "claims": df.to_dict("records"),
+            "summary": summary,
+            "from_cache": from_cache,
+        }
+    )
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
