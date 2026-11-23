@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LLM Hallucination Detector</title>
+<title>Explainable LLM Hallucination Detector</title>
 <style>
   body { background: #ffffff; font-family: system-ui, Arial, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; color: #1f2937; }
   h1 { margin-bottom: 4px; }
@@ -12,23 +12,35 @@
   textarea { width: 100%; box-sizing: border-box; padding: 10px; font-size: 15px; border: 1px solid #d1d5db; border-radius: 8px; margin: 10px 0; }
   button { background: #2563eb; color: white; border: 0; padding: 10px 20px; border-radius: 8px; font-size: 15px; cursor: pointer; }
   button:disabled { background: #93c5fd; cursor: wait; }
-  .counts { display: flex; gap: 12px; flex-wrap: wrap; }
-  .count { flex: 1; min-width: 150px; padding: 12px; border-radius: 8px; text-align: center; }
-  .count b { display: block; font-size: 26px; }
+  .header-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .header-row h3 { margin: 0; }
+  .badge { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+  .counts { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+  .count { flex: 1; min-width: 140px; padding: 12px; border-radius: 8px; text-align: center; }
+  .count b { display: block; font-size: 24px; }
+  .metric { background: #f8fafc; border: 1px solid #e2e8f0; }
   .Supported { background: #dcfce7; border-left: 5px solid #16a34a; }
   .Contradicted { background: #fee2e2; border-left: 5px solid #dc2626; }
   .Unverified { background: #f3f4f6; border-left: 5px solid #9ca3af; }
-  .claim { padding: 10px 12px; border-radius: 8px; margin: 8px 0; }
-  .tag { font-weight: 600; font-size: 13px; }
-  .evidence { font-size: 13px; color: #4b5563; margin-top: 6px; }
+  .bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: #e5e7eb; margin: 14px 0 6px; }
+  .bar-sup { background: #16a34a; }
+  .bar-con { background: #dc2626; }
+  .bar-unv { background: #9ca3af; }
+  .claim { padding: 12px 14px; border-radius: 8px; margin: 10px 0; }
+  .tag { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .claim-text { font-size: 15px; font-weight: 500; }
+  .explanation { font-size: 13px; color: #374151; margin-top: 6px; }
+  .scores { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .score-pill { font-size: 12px; background: rgba(255, 255, 255, 0.75); border: 1px solid #d1d5db; border-radius: 6px; padding: 2px 7px; color: #374151; }
+  .evidence { font-size: 13px; color: #4b5563; margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(0, 0, 0, 0.08); }
   #error { color: #b91c1c; margin-top: 8px; }
-  .note { font-size: 13px; color: #6b7280; }
-  #answerBox { white-space: pre-wrap; }
+  .note { font-size: 13px; color: #6b7280; margin-bottom: 0; }
+  #answerBox { white-space: pre-wrap; line-height: 1.5; }
 </style>
 </head>
 <body>
 <h1>LLM Hallucination Detector</h1>
-<p class="sub">Breaks an answer into claims and checks each one against Wikipedia.</p>
+<p class="sub">Explainable claim-level detection and quantification of hallucinations against Wikipedia.</p>
 
 <div class="card">
   <label><input type="radio" name="mode" value="question" checked> Ask a question</label>
@@ -42,21 +54,58 @@
 
 <div id="result" hidden>
   <div class="card">
-    <h3 id="pageTitle"></h3>
+    <div class="header-row">
+      <h3 id="pageTitle"></h3>
+      <span id="cacheBadge" class="badge" hidden>Cached result</span>
+    </div>
+
+    <!-- Quantification Metrics -->
+    <div class="counts">
+      <div class="count metric"><b id="mFact">0%</b>Factuality Score</div>
+      <div class="count metric"><b id="mHal">0%</b>Hallucination Rate</div>
+      <div class="count metric"><b id="mRisk">0%</b>Hallucination Risk</div>
+    </div>
+
+    <!-- Visual Distribution Bar -->
+    <div class="bar" aria-label="Claim distribution">
+      <div id="barSup" class="bar-sup" style="width: 0%"></div>
+      <div id="barCon" class="bar-con" style="width: 0%"></div>
+      <div id="barUnv" class="bar-unv" style="width: 0%"></div>
+    </div>
+
+    <!-- Raw Claim Counts -->
     <div class="counts">
       <div class="count Supported"><b id="nSup">0</b>Supported</div>
       <div class="count Contradicted"><b id="nCon">0</b>Contradicted</div>
       <div class="count Unverified"><b id="nUnv">0</b>Could not verify</div>
     </div>
-    <p class="note">"Could not verify" means Wikipedia did not confirm the claim. It does not mean the claim is false.</p>
+
+    <p class="note">
+      <strong>Factuality Score</strong> = Supported / Total.
+      <strong>Hallucination Rate</strong> = Contradicted / Total.
+      <strong>Hallucination Risk</strong> = (Contradicted + Unverified) / Total.
+    </p>
   </div>
-  <div class="card"><h3>Answer checked</h3><div id="answerBox"></div></div>
-  <h3>Claims</h3>
+
+  <div class="card">
+    <h3>Answer checked</h3>
+    <div id="answerBox"></div>
+  </div>
+
+  <h3 id="claimsHeading">Claims</h3>
   <div id="claims"></div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
+
+document.querySelectorAll('input[name="mode"]').forEach(radio => {
+  radio.addEventListener("change", () => {
+    $("text").placeholder = radio.value === "question"
+      ? "e.g. Tell me about Alan Turing."
+      : "Paste an LLM-generated paragraph here to verify its claims...";
+  });
+});
 
 $("go").addEventListener("click", async () => {
   const mode = document.querySelector('input[name="mode"]:checked').value;
@@ -84,36 +133,84 @@ $("go").addEventListener("click", async () => {
 });
 
 function render(d) {
+  const s = d.summary || {};
+  const total = s.total || 0;
+
   $("result").hidden = false;
   $("pageTitle").textContent = "Wikipedia page used: " + d.page;
-  $("nSup").textContent = d.summary.supported;
-  $("nCon").textContent = d.summary.contradicted;
-  $("nUnv").textContent = d.summary.unverifiable;
+  $("cacheBadge").hidden = !d.from_cache;
+
+  // Quantification metrics
+  $("mFact").textContent = (s.factuality_score ?? 0).toFixed(1) + "%";
+  $("mHal").textContent = (s.hallucination_rate ?? 0).toFixed(1) + "%";
+  $("mRisk").textContent = (s.hallucination_risk_score ?? 0).toFixed(1) + "%";
+
+  // Stacked distribution bar
+  $("barSup").style.width = total ? ((s.supported / total) * 100) + "%" : "0%";
+  $("barCon").style.width = total ? ((s.contradicted / total) * 100) + "%" : "0%";
+  $("barUnv").style.width = total ? ((s.unverifiable / total) * 100) + "%" : "0%";
+
+  // Counts
+  $("nSup").textContent = s.supported ?? 0;
+  $("nCon").textContent = s.contradicted ?? 0;
+  $("nUnv").textContent = s.unverifiable ?? 0;
   $("answerBox").textContent = d.answer;
+  $("claimsHeading").textContent = `Claims (${total})`;
 
   const box = $("claims");
   box.innerHTML = "";
-  d.claims.forEach(c => {
+
+  if (!d.claims || d.claims.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "note";
+    empty.textContent = "No atomic factual claims could be extracted from this text.";
+    box.appendChild(empty);
+    return;
+  }
+
+  d.claims.forEach((c, idx) => {
     const cls = c.verdict === "Supported" ? "Supported"
               : c.verdict === "Contradicted" ? "Contradicted" : "Unverified";
     const label = c.verdict === "Not enough info" ? "Could not verify" : c.verdict;
+
     const div = document.createElement("div");
     div.className = "claim " + cls;
 
     const tag = document.createElement("div");
     tag.className = "tag";
-    tag.textContent = label + " (confidence " + c.confidence.toFixed(2) + ")";
+    tag.textContent = `Claim ${idx + 1}: ${label} (confidence ${(c.confidence ?? 0).toFixed(2)})`;
+
     const claim = document.createElement("div");
+    claim.className = "claim-text";
     claim.textContent = c.claim;
+
+    const exp = document.createElement("div");
+    exp.className = "explanation";
+    exp.textContent = c.explanation || "";
+
+    const scores = document.createElement("div");
+    scores.className = "scores";
+    const pills = [
+      `Entailment: ${(c.entailment_score ?? 0).toFixed(2)}`,
+      `Contradiction: ${(c.contradiction_score ?? 0).toFixed(2)}`,
+      `Neutral: ${(c.neutral_score ?? 0).toFixed(2)}`,
+      `Evidence Similarity: ${(c.similarity ?? 0).toFixed(2)}`
+    ];
+    pills.forEach(text => {
+      const span = document.createElement("span");
+      span.className = "score-pill";
+      span.textContent = text;
+      scores.appendChild(span);
+    });
+
     const ev = document.createElement("div");
     ev.className = "evidence";
     ev.textContent = c.evidence ? "Evidence: " + c.evidence : "No evidence sentence found.";
 
-    div.append(tag, claim, ev);
+    div.append(tag, claim, exp, scores, ev);
     box.appendChild(div);
   });
 }
 </script>
 </body>
 </html>
-
